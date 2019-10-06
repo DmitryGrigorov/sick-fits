@@ -9,7 +9,7 @@ import { TOGGLE_CART_MUTATION } from './Cart'
 const Nav = () => (
     <User>
       {
-        ({ data: {me} }) => (
+        ({ data: {me} }) => console.log('me', me) || (
           <NavStyles data-test="nav">
             <Link href='/items'>
               <a>Shop</a>
@@ -22,12 +22,12 @@ const Nav = () => (
                 <Link href='/orders'>
                   <a>Orders</a>
                 </Link>
-                <Link href='/account'>
+                <Link href='/me'>
                   <a>Account</a>
                 </Link>
                 <Signout/>
                 <Mutation mutation={TOGGLE_CART_MUTATION} >
-                  {toggleCart =>
+                  {toggleCart => console.log('toggleCart', toggleCart) ||
                     <button onClick={toggleCart}>
                       My Cart
                       <CartCount count={

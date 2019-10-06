@@ -9,9 +9,9 @@ const CURRENT_USER_QUERY = gql`
       email
       name
       permissions
-      orders {
-        id
-      }
+      # orders {
+      #   id
+      # }
       cart {
         id
         quantity
@@ -29,7 +29,7 @@ const CURRENT_USER_QUERY = gql`
 
 const User = props => (
   <Query {...props} query={CURRENT_USER_QUERY}>
-    {payload => props.children(payload)}
+    {payload => console.log('payload: ', payload) || props.children(payload)}
   </Query>
 );
 
