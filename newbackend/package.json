@@ -25,6 +25,10 @@
     "prisma-binding": "2.1.6",
     "stripe": "^6.12.1"
   },
+  "devDependencies": {
+    "babel-cli": "^6.26.0",
+    "babel-preset-env": "^1.7.0"
+  },
   "author": "Dmitry Grigorov",
   "license": "ISC"
 }
