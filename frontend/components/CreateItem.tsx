@@ -77,11 +77,17 @@ const CreateItem = () => {
   };
 
   const onFinish = async (values: FormValues) => {
-    const res = await createItem({
-      variables: { ...values, image, largeImage },
-    });
-    if (res.data) {
-      router.push(`/item?id=${res.data.createItem.id}`);
+    try {
+      const res = await createItem({
+        variables: { ...values, image: image || undefined, largeImage: largeImage || undefined },
+      });
+      if (!res.data) {
+        throw new Error('The server did not return the created product');
+      }
+      message.success('Product created successfully');
+      await router.push(`/item?id=${res.data.createItem.id}`);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'Could not create the product');
     }
   };
 

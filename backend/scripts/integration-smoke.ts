@@ -123,6 +123,62 @@ async function testAccount(credential: Credential, isAdmin: boolean): Promise<vo
   }
 }
 
+async function testItemLifecycle(admin: Credential, buyer: Credential): Promise<void> {
+  const title = `Integration product ${Date.now()}`;
+  const adminCookie = await login(admin);
+  let createdId: string | undefined;
+  try {
+    const created = await graphql<{ createItem: { id: string; title: string; price: number } }>(
+      `mutation CreateItem($title: String!, $description: String!, $price: Int!) {
+        createItem(title: $title, description: $description, price: $price) {
+          id title price
+        }
+      }`,
+      { title, description: 'Temporary integration product', price: 1234 },
+      adminCookie
+    );
+    assertGraphQL(created, 'admin create item');
+    createdId = created.body.data.createItem.id;
+
+    const updated = await graphql<{ updateItem: { id: string; title: string; price: number } }>(
+      `mutation UpdateItem($id: ID!, $title: String, $price: Int) {
+        updateItem(id: $id, title: $title, price: $price) { id title price }
+      }`,
+      { id: createdId, title: `${title} updated`, price: 2345 },
+      adminCookie
+    );
+    assertGraphQL(updated, 'admin update item');
+    if (updated.body.data.updateItem.price !== 2345) {
+      throw new Error('admin update item returned an unexpected price');
+    }
+
+    const buyerCookie = await login(buyer);
+    const forbidden = await graphql<{ createItem: { id: string } }>(
+      `mutation CreateForbiddenItem {
+        createItem(title: "Forbidden", description: "Must not be created", price: 1) { id }
+      }`,
+      {},
+      buyerCookie
+    );
+    if (!forbidden.body.errors?.length) {
+      throw new Error('buyer unexpectedly created an item without ITEMCREATE permission');
+    }
+
+    const deleted = await graphql<{ deleteItem: { id: string } }>(
+      `mutation DeleteItem($id: ID!) { deleteItem(id: $id) { id } }`,
+      { id: createdId },
+      adminCookie
+    );
+    assertGraphQL(deleted, 'admin delete item');
+    createdId = undefined;
+    console.log('PASS admin item create-update-delete lifecycle');
+  } finally {
+    if (createdId) {
+      await prisma.item.deleteMany({ where: { id: createdId } });
+    }
+  }
+}
+
 async function main(): Promise<void> {
   const configured = credentials();
   const users = await prisma.user.findMany({
@@ -222,6 +278,14 @@ async function main(): Promise<void> {
 
   for (const user of users) {
     await testAccount(byEmail.get(user.email.toLowerCase())!, user.permissions.includes('ADMIN'));
+  }
+  const admin = users.find(user => user.permissions.includes('ADMIN'));
+  const buyer = users.find(user => !user.permissions.includes('ITEMCREATE'));
+  if (admin && buyer) {
+    await testItemLifecycle(
+      byEmail.get(admin.email.toLowerCase())!,
+      byEmail.get(buyer.email.toLowerCase())!
+    );
   }
 
   if (!process.env.MAIL_HOST) {
