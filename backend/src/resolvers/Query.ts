@@ -60,7 +60,10 @@ const Query = {
 
   me(_parent: unknown, _args: unknown, ctx: Context) {
     if (!ctx.req.userId) return null;
-    return ctx.db.user.findUnique({ where: { id: ctx.req.userId } });
+    return ctx.db.user.findUnique({
+      where: { id: ctx.req.userId },
+      include: { cart: { include: { item: true } } },
+    });
   },
 
   async users(_parent: unknown, _args: unknown, ctx: Context) {
@@ -75,7 +78,10 @@ const Query = {
     if (!ctx.req.userId || !ctx.req.user) {
       throw new Error('You arent logged in');
     }
-    const order = await ctx.db.order.findUnique({ where: { id: args.id } });
+    const order = await ctx.db.order.findUnique({
+      where: { id: args.id },
+      include: { items: true, user: true },
+    });
     if (!order) throw new Error('No order found');
     const ownsOrder = order.userId === ctx.req.userId;
     const hasPermissionToSeeOrder = ctx.req.user.permissions.includes('ADMIN');
@@ -93,6 +99,7 @@ const Query = {
     return ctx.db.order.findMany({
       where: { userId },
       orderBy: mapOrderOrderBy(args.orderBy),
+      include: { items: true, user: true },
     });
   },
 };

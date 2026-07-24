@@ -1,5 +1,12 @@
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET as string);
+let stripe: Stripe | undefined;
 
-export default stripe;
+export function getStripe(): Stripe {
+  const secret = process.env.STRIPE_SECRET;
+  if (!secret) {
+    throw new Error('Stripe checkout is not configured. Set STRIPE_SECRET to enable payments.');
+  }
+  stripe ??= new Stripe(secret);
+  return stripe;
+}

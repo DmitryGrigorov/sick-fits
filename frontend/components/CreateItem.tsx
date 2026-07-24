@@ -5,6 +5,7 @@ import { Form, Input, InputNumber, Button, Upload, message } from 'antd';
 import type { UploadProps } from 'antd';
 import { UploadOutlined } from '@ant-design/icons';
 import ErrorMessage from './ErrorMessage';
+import { cloudinaryCloudName, cloudinaryUploadPreset } from '../config';
 
 type CustomRequestOptions = Parameters<NonNullable<UploadProps['customRequest']>>[0];
 
@@ -50,18 +51,25 @@ const CreateItem = () => {
     setUploading(true);
     const data = new FormData();
     data.append('file', file as Blob);
-    data.append('upload_preset', 'sick-fits');
+    data.append('upload_preset', cloudinaryUploadPreset);
     try {
-      const res = await fetch('https://api.cloudinary.com/v1_1/dt81vcbxa/image/upload', {
+      const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`, {
         method: 'POST',
         body: data,
       });
-      const uploaded = await res.json();
+      const uploaded = (await res.json()) as {
+        secure_url?: string;
+        eager?: Array<{ secure_url?: string }>;
+        error?: { message?: string };
+      };
+      if (!res.ok || !uploaded.secure_url) {
+        throw new Error(uploaded.error?.message || `Image upload failed with HTTP ${res.status}`);
+      }
       setImage(uploaded.secure_url);
       setLargeImage(uploaded.eager?.[0]?.secure_url ?? uploaded.secure_url);
       onSuccess?.(uploaded);
     } catch (err) {
-      message.error('Image upload failed');
+      message.error(err instanceof Error ? err.message : 'Image upload failed');
       onError?.(err as Error);
     } finally {
       setUploading(false);

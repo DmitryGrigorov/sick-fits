@@ -1,16 +1,21 @@
 import nodemailer from 'nodemailer';
 
-const transport = nodemailer.createTransport({
-  host: process.env.MAIL_HOST,
-  port: Number(process.env.MAIL_PORT),
-  auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS,
-  },
-});
+const transport = process.env.MAIL_HOST
+  ? nodemailer.createTransport({
+      host: process.env.MAIL_HOST,
+      port: Number(process.env.MAIL_PORT) || 587,
+      auth:
+        process.env.MAIL_USER && process.env.MAIL_PASS
+          ? {
+              user: process.env.MAIL_USER,
+              pass: process.env.MAIL_PASS,
+            }
+          : undefined,
+    })
+  : nodemailer.createTransport({ jsonTransport: true });
 
 const makeANiceEmail = (text: string): string => `
-  <div className="email"
+  <div class="email"
     style="
       border: 1px solid black;
       padding: 20px;

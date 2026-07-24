@@ -5,20 +5,30 @@ import { promisify } from 'util';
 import type { Permission } from '@prisma/client';
 import { transport, makeANiceEmail } from '../mail';
 import { hasPermission } from '../utils';
-import stripe from '../stripe';
+import { getStripe } from '../stripe';
 import type { Context } from '../types';
 
-const ONE_YEAR_COOKIE = 1000 * 60 * 60 * 24 * 365;
+const SEVEN_DAY_COOKIE = 1000 * 60 * 60 * 24 * 7;
 
 function signToken(userId: string): string {
-  return jwt.sign({ userId }, process.env.APP_SECRET as string);
+  const secret = process.env.APP_SECRET;
+  if (!secret) throw new Error('APP_SECRET environment variable is required');
+  return jwt.sign({ userId }, secret, { expiresIn: '7d' });
+}
+
+function tokenCookieOptions() {
+  const isProduction = process.env.NODE_ENV === 'production';
+  return {
+    httpOnly: true,
+    maxAge: SEVEN_DAY_COOKIE,
+    sameSite: 'lax' as const,
+    secure: isProduction,
+    path: '/',
+  };
 }
 
 function setTokenCookie(ctx: Context, token: string): void {
-  ctx.res.cookie('token', token, {
-    httpOnly: true,
-    maxAge: ONE_YEAR_COOKIE,
-  });
+  ctx.res.cookie('token', token, tokenCookieOptions());
 }
 
 const Mutations = {
@@ -27,9 +37,10 @@ const Mutations = {
     args: { title: string; description: string; price: number; image?: string; largeImage?: string },
     ctx: Context
   ) {
-    if (!ctx.req.userId) {
+    if (!ctx.req.userId || !ctx.req.user) {
       throw new Error('You must be logged in to do that');
     }
+    hasPermission(ctx.req.user, ['ADMIN', 'ITEMCREATE']);
     return ctx.db.item.create({
       data: {
         title: args.title,
@@ -47,11 +58,24 @@ const Mutations = {
     args: { id: string; title?: string; description?: string; price?: number },
     ctx: Context
   ) {
+    if (!ctx.req.userId || !ctx.req.user) {
+      throw new Error('You must be logged in to do that');
+    }
     const updates = { ...args } as Partial<typeof args>;
     delete updates.id;
-    return ctx.db.item.update({
-      data: updates,
-      where: { id: args.id },
+    return ctx.db.item.findUnique({ where: { id: args.id } }).then(item => {
+      if (!item) throw new Error('Item not found');
+      const ownsItem = item.userId === ctx.req.userId;
+      const canUpdate = ctx.req.user!.permissions.some(permission =>
+        ['ADMIN', 'ITEMUPDATE'].includes(permission)
+      );
+      if (!ownsItem && !canUpdate) {
+        throw new Error("You don't have permission to do this");
+      }
+      return ctx.db.item.update({
+        data: updates,
+        where: { id: args.id },
+      });
     });
   },
 
@@ -69,7 +93,7 @@ const Mutations = {
   },
 
   async signup(_parent: unknown, args: { email: string; password: string; name: string }, ctx: Context) {
-    const email = args.email.toLowerCase();
+    const email = args.email.trim().toLowerCase();
     const password = await bcrypt.hash(args.password, 10);
     const user = await ctx.db.user.create({
       data: {
@@ -84,7 +108,8 @@ const Mutations = {
   },
 
   async signin(_parent: unknown, args: { email: string; password: string }, ctx: Context) {
-    const { email, password } = args;
+    const email = args.email.trim().toLowerCase();
+    const { password } = args;
     const user = await ctx.db.user.findUnique({ where: { email } });
     if (!user) {
       throw new Error(`No such user found for email: ${email}`);
@@ -98,20 +123,22 @@ const Mutations = {
   },
 
   signout(_parent: unknown, _args: unknown, ctx: Context) {
-    ctx.res.clearCookie('token');
+    const { maxAge: _maxAge, ...clearOptions } = tokenCookieOptions();
+    ctx.res.clearCookie('token', clearOptions);
     return { message: 'Goodbye!' };
   },
 
   async requestReset(_parent: unknown, args: { email: string }, ctx: Context) {
-    const user = await ctx.db.user.findUnique({ where: { email: args.email } });
+    const email = args.email.trim().toLowerCase();
+    const user = await ctx.db.user.findUnique({ where: { email } });
     if (!user) {
-      throw new Error(`No such user found for email: ${args.email}`);
+      throw new Error(`No such user found for email: ${email}`);
     }
     const randomBytesPromisified = promisify(randomBytes);
     const resetToken = (await randomBytesPromisified(20)).toString('hex');
     const resetTokenExpiry = String(Date.now() + 3600000); // 1 hour from now
     await ctx.db.user.update({
-      where: { email: args.email },
+      where: { email },
       data: { resetToken, resetTokenExpiry },
     });
     await transport.sendMail({
@@ -134,7 +161,7 @@ const Mutations = {
       throw new Error("Yo Passwords don't match");
     }
     const user = await ctx.db.user.findFirst({ where: { resetToken: args.resetToken } });
-    if (!user || !user.resetTokenExpiry || Number(user.resetTokenExpiry) < Date.now() - 3600000) {
+    if (!user || !user.resetTokenExpiry || Number(user.resetTokenExpiry) < Date.now()) {
       throw new Error('This token is either invalid or expired!');
     }
     const password = await bcrypt.hash(args.password, 10);
@@ -167,21 +194,16 @@ const Mutations = {
 
   async addToCart(_parent: unknown, args: { id: string }, ctx: Context) {
     const { userId } = ctx.req;
-    if (!userId) throw new Error('You must be signed in soon');
-    const existingCartItem = await ctx.db.cartItem.findFirst({
-      where: { userId, itemId: args.id },
-    });
-    if (existingCartItem) {
-      return ctx.db.cartItem.update({
-        where: { id: existingCartItem.id },
-        data: { quantity: existingCartItem.quantity + 1 },
-      });
-    }
-    return ctx.db.cartItem.create({
-      data: {
-        user: { connect: { id: userId } },
-        item: { connect: { id: args.id } },
+    if (!userId) throw new Error('You must be signed in');
+    return ctx.db.cartItem.upsert({
+      where: {
+        userId_itemId: {
+          userId,
+          itemId: args.id,
+        },
       },
+      update: { quantity: { increment: 1 } },
+      create: { userId, itemId: args.id },
     });
   },
 
@@ -206,7 +228,7 @@ const Mutations = {
       (tally, cartItem) => tally + (cartItem.item ? cartItem.item.price * cartItem.quantity : 0),
       0
     );
-    const charge = await stripe.charges.create({
+    const charge = await getStripe().charges.create({
       amount,
       currency: 'USD',
       source: args.token,
